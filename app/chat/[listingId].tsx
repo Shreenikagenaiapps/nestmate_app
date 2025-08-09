@@ -1,229 +1,282 @@
-import { useLocalSearchParams } from 'expo-router';
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  where,
-} from 'firebase/firestore';
-import { useEffect, useState } from 'react';
-import {
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { auth, db } from '../firebaseConfig';
+// // app/chat/[listingId].tsx
+// import { useLocalSearchParams } from 'expo-router';
+// import {
+//   addDoc,
+//   collection,
+//   doc,
+//   getDoc,
+//   onSnapshot,
+//   orderBy,
+//   query,
+//   serverTimestamp,
+//   setDoc,
+//   updateDoc,
+//   where,
+// } from 'firebase/firestore';
+// import { useEffect, useRef, useState } from 'react';
+// import {
+//   FlatList,
+//   KeyboardAvoidingView,
+//   Platform,
+//   Text,
+//   TextInput,
+//   TouchableOpacity,
+//   View,
+// } from 'react-native';
+// import { auth, db } from '../firebaseConfig';
 
-type Message = {
-  id: string;
-  text: string;
-  senderId: string;
-  createdAt: any;
-};
+// type Message = {
+//   id: string;
+//   text: string;
+//   senderId: string;
+//   createdAt: any;
+// };
 
-export default function ChatScreen() {
-  const { listingId } = useLocalSearchParams<{ listingId: string }>();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [chatId, setChatId] = useState('');
-  const [isOwner, setIsOwner] = useState(false);
-  const [ownerId, setOwnerId] = useState('');
-  const [senderNames, setSenderNames] = useState<Record<string, string>>({});
-  const [status, setStatus] = useState('');
+// type OwnerThread = {
+//   id: string;       // chatId
+//   buyerId: string;  // first segment of chatId
+// };
 
+// export default function ChatScreen() {
+//   const { listingId } = useLocalSearchParams<{ listingId: string }>();
 
-  const currentUser = auth.currentUser;
+//   const [messages, setMessages] = useState<Message[]>([]);
+//   const [input, setInput] = useState('');
+//   const [chatId, setChatId] = useState('');           // active chat for non-owner
+//   const [isOwner, setIsOwner] = useState(false);
+//   const [ownerId, setOwnerId] = useState('');
 
-  useEffect(() => {
-    if (!listingId || !currentUser) return;
+//   // owner-only
+//   const [threads, setThreads] = useState<OwnerThread[]>([]);
+//   const [selectedChatId, setSelectedChatId] = useState<string>(''); // owner’s active chat
+//   const [buyerNames, setBuyerNames] = useState<Record<string,string>>({});
 
-    let unsubscribe: (() => void) | undefined;
+//   const currentUser = auth.currentUser;
+//   const msgsUnsubRef = useRef<undefined | (() => void)>();
 
-    const initChat = async () => {
-      const listingDoc = await getDoc(doc(db, 'listings', String(listingId)));
-      if (!listingDoc.exists()) return;
+//   // util: extract buyerId from chatId "buyer_owner_listing"
+//   const buyerFromChatId = (cid: string) => {
+//     const parts = cid.split('_');
+//     return parts[0] || '';
+//   };
 
-      const listing = listingDoc.data();
-      const owner = listing.userId || listing.ownerId || '';
-      setOwnerId(owner);
-      setStatus(listing.status || 'Available');
-      const senderId = currentUser.uid;
+//   // subscribe to messages for a given chat (and clean up previous)
+//   const subscribeToChatMessages = (cid: string) => {
+//     if (msgsUnsubRef.current) {
+//       msgsUnsubRef.current();
+//       msgsUnsubRef.current = undefined;
+//     }
+//     const msgsRef = collection(db, `chats/${cid}/messages`);
+//     const qMsgs = query(msgsRef, orderBy('createdAt', 'asc'));
+//     const unsub = onSnapshot(qMsgs, (snap) => {
+//       const list: Message[] = snap.docs.map((d) => ({
+//         id: d.id,
+//         ...(d.data() as Omit<Message, 'id'>),
+//       }));
+//       setMessages(list);
+//     });
+//     msgsUnsubRef.current = unsub;
+//   };
 
-      if (senderId === owner) {
-        setIsOwner(true);
+//   useEffect(() => {
+//     let unsubThreads: undefined | (() => void);
 
-        const chatsQuery = query(
-          collection(db, 'chats'),
-          where('listingId', '==', listingId)
-        );
+//     const init = async () => {
+//       if (!listingId || !currentUser) return;
 
-        unsubscribe = onSnapshot(chatsQuery, (chatSnap) => {
-          const allMsgs: Message[] = [];
+//       // 1) Resolve owner
+//       const listingRef = doc(db, 'listings', String(listingId));
+//       const listingSnap = await getDoc(listingRef);
+//       if (!listingSnap.exists()) return;
 
-          chatSnap.docs.forEach((chatDoc) => {
-            const thisChatId = chatDoc.id;
-            if (!chatId) setChatId(thisChatId);
+//       const listing = listingSnap.data() as any;
+//       const owner = listing.ownerId || listing.userId;
+//       setOwnerId(owner);
 
-            const msgsRef = collection(db, 'chats', thisChatId, 'messages');
-            const msgsQuery = query(msgsRef, orderBy('createdAt', 'asc'));
+//       const me = currentUser.uid;
+//       const iAmOwner = me === owner;
+//       setIsOwner(iAmOwner);
 
-            onSnapshot(msgsQuery, async (msgSnap) => {
-              const msgList: Message[] = msgSnap.docs.map((doc) => ({
-                id: doc.id,
-                ...(doc.data() as Omit<Message, 'id'>),
-              }));
+//       if (iAmOwner) {
+//         // =========== OWNER FLOW ===========
+//         // Live list of chats for this listing
+//         const chatsQ = query(
+//           collection(db, 'chats'),
+//           where('listingId', '==', String(listingId))
+//         );
+//         unsubThreads = onSnapshot(chatsQ, (snap) => {
+//           const t: OwnerThread[] = snap.docs.map((d) => {
+//             const id = d.id;
+//             return { id, buyerId: buyerFromChatId(id) };
+//           });
+//           setThreads(t);
 
-              // Fetch sender names
-              await Promise.all(
-                msgList.map(async (msg) => {
-                  if (!senderNames[msg.senderId]) {
-                    const userSnap = await getDoc(doc(db, 'users', msg.senderId));
-                    const userName = userSnap.exists()
-                      ? userSnap.data().email
-                      : 'Unknown User';
-                    setSenderNames((prev) => ({ ...prev, [msg.senderId]: userName }));
-                  }
-                })
-              );
+//           // auto-select first thread if none selected
+//           if (!selectedChatId && t.length > 0) {
+//             const first = t[0].id;
+//             setSelectedChatId(first);
+//             subscribeToChatMessages(first);
+//           }
 
-              setMessages(msgList);
-            });
-          });
-        });
+//           // prefetch buyer names (optional)
+//           t.forEach(async (th) => {
+//             if (!buyerNames[th.buyerId]) {
+//               try {
+//                 const u = await getDoc(doc(db, 'users', th.buyerId));
+//                 const data = u.exists() ? (u.data() as any) : null;
+//                 const label = (data && (data.name || data.email)) || th.buyerId;
+//                 setBuyerNames((prev) => (prev[th.buyerId] ? prev : { ...prev, [th.buyerId]: label }));
+//               } catch {}
+//             }
+//           });
+//         });
+//       } else {
+//         // =========== NON-OWNER FLOW ===========
+//         const generatedChatId = `${me}_${owner}_${listingId}`;
+//         setChatId(generatedChatId);
 
-        return;
-      }
+//         // ensure parent chat exists (safe no-op if it does)
+//         const chatRef = doc(db, 'chats', generatedChatId);
+//         const chatSnap = await getDoc(chatRef);
+//         if (!chatSnap.exists()) {
+//           await setDoc(chatRef, {
+//             listingId: String(listingId),
+//             senderId: me,
+//             receiverId: owner,
+//             createdAt: serverTimestamp(),
+//             // additive extras (won’t break your index screen)
+//             participants: [me, owner],
+//             updatedAt: serverTimestamp(),
+//           });
+//         } else {
+//           try { await updateDoc(chatRef, { updatedAt: serverTimestamp() }); } catch {}
+//         }
 
-      // Non-owner logic
-      const receiverId = owner;
-      const generatedChatId = `${senderId}_${receiverId}_${listingId}`;
-      setChatId(generatedChatId);
+//         // subscribe to just this thread
+//         subscribeToChatMessages(generatedChatId);
+//       }
+//     };
 
-      const chatRef = doc(db, 'chats', generatedChatId);
-      const chatSnap = await getDoc(chatRef);
-      if (!chatSnap.exists()) {
-        await setDoc(chatRef, {
-          listingId,
-          senderId,
-          receiverId,
-          createdAt: serverTimestamp(),
-        });
-      }
+//     init();
 
-      const messagesRef = collection(db, 'chats', generatedChatId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'asc'));
-      unsubscribe = onSnapshot(q, async (snapshot) => {
-        const msgList: Message[] = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Message, 'id'>),
-        }));
+//     return () => {
+//       if (msgsUnsubRef.current) {
+//         msgsUnsubRef.current();
+//         msgsUnsubRef.current = undefined;
+//       }
+//       if (unsubThreads) unsubThreads();
+//     };
+//     // eslint-disable-next-line react-hooks/exhaustive-deps
+//   }, [listingId]);
 
-        // Fetch sender names
-        await Promise.all(
-          msgList.map(async (msg) => {
-            if (!senderNames[msg.senderId]) {
-              const userSnap = await getDoc(doc(db, 'users', msg.senderId));
-              const userName = userSnap.exists()
-                ? userSnap.data().email
-                : 'Unknown User';
-              setSenderNames((prev) => ({ ...prev, [msg.senderId]: userName }));
-            }
-          })
-        );
+//   // when owner selects a different thread, switch the single subscription
+//   useEffect(() => {
+//     if (isOwner && selectedChatId) {
+//       subscribeToChatMessages(selectedChatId);
+//     }
+//     // eslint-disable-next-line react-hooks/exhaustive-deps
+//   }, [isOwner, selectedChatId]);
 
-        setMessages(msgList);
-      });
-    };
+//   const handleSend = async () => {
+//     if (!input.trim() || !currentUser) return;
 
-    initChat();
+//     const activeChatId = isOwner ? selectedChatId : chatId;
+//     if (!activeChatId) return;
 
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [listingId]);
+//     await addDoc(collection(db, `chats/${activeChatId}/messages`), {
+//       text: input.trim(),
+//       senderId: currentUser.uid,
+//       createdAt: serverTimestamp(),
+//     });
 
-  const sendMessage = async () => {
-    if (!chatId || !input.trim() || !currentUser) return;
+//     try {
+//       await updateDoc(doc(db, 'chats', activeChatId), { updatedAt: serverTimestamp() });
+//     } catch {}
 
-    const message = {
-      text: input,
-      senderId: currentUser.uid,
-      createdAt: serverTimestamp(),
-    };
+//     setInput('');
+//   };
 
-    await addDoc(collection(db, 'chats', chatId, 'messages'), message);
-    setInput('');
-  };
+//   return (
+//     <KeyboardAvoidingView
+//       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+//       style={{ flex: 1 }}
+//       keyboardVerticalOffset={80}
+//     >
+//       {/* Owner: pick which buyer thread to view/reply */}
+//       {isOwner && threads.length > 0 && (
+//         <FlatList
+//           horizontal
+//           data={threads}
+//           keyExtractor={(t) => t.id}
+//           showsHorizontalScrollIndicator={false}
+//           contentContainerStyle={{ padding: 10, gap: 8 }}
+//           renderItem={({ item }) => {
+//             const selected = item.id === selectedChatId;
+//             const label = buyerNames[item.buyerId] || item.buyerId;
+//             return (
+//               <TouchableOpacity
+//                 onPress={() => setSelectedChatId(item.id)}
+//                 style={{
+//                   paddingVertical: 8,
+//                   paddingHorizontal: 12,
+//                   borderRadius: 16,
+//                   backgroundColor: selected ? '#2196F3' : '#eee',
+//                 }}
+//               >
+//                 <Text style={{ color: selected ? '#fff' : '#000' }}>{label}</Text>
+//               </TouchableOpacity>
+//             );
+//           }}
+//         />
+//       )}
 
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <FlatList
-        data={messages}
-        renderItem={({ item }) => {
-          const isCurrentUser = item.senderId === currentUser?.uid;
-          const isOwnerSender = item.senderId === ownerId;
-          const senderLabel = senderNames[item.senderId] || '...';
-          return (
-            <View
-              style={{
-                alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
-                backgroundColor: isCurrentUser ? '#DCF8C6' : '#eee',
-                padding: 10,
-                borderRadius: 8,
-                margin: 5,
-                maxWidth: '80%',
-              }}
-            >
-              <Text style={{ fontSize: 12, fontWeight: '600', marginBottom: 2 }}>
-                {senderLabel}
-                {isOwnerSender ? ' (Owner)' : ''}
-              </Text>
-              <Text>{item.text}</Text>
-            </View>
-          );
-        }}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 10 }}
-      />
+//       {/* Messages for the active thread only */}
+//       <FlatList
+//         data={messages}
+//         keyExtractor={(item) => item.id}
+//         renderItem={({ item }) => (
+//           <View
+//             style={{
+//               alignSelf: item.senderId === currentUser?.uid ? 'flex-end' : 'flex-start',
+//               backgroundColor: item.senderId === currentUser?.uid ? '#2196F3' : '#ddd',
+//               borderRadius: 16,
+//               padding: 10,
+//               marginVertical: 4,
+//               marginHorizontal: 10,
+//               maxWidth: '80%',
+//             }}
+//           >
+//             <Text style={{ color: item.senderId === currentUser?.uid ? '#fff' : '#000' }}>
+//               {item.text}
+//             </Text>
+//           </View>
+//         )}
+//         contentContainerStyle={{ paddingVertical: 12 }}
+//       />
 
-      {chatId && (status !== 'Booked' || currentUser?.uid === ownerId) ? (
-        <View style={{ flexDirection: 'row', padding: 10 }}>
-          <TextInput
-            value={input}
-            onChangeText={setInput}
-            placeholder="Type a message"
-            onSubmitEditing={sendMessage}
-            returnKeyType="send"
-            style={{
-              flex: 1,
-              borderWidth: 1,
-              borderColor: '#ccc',
-              borderRadius: 20,
-              paddingHorizontal: 15,
-              paddingVertical: 8,
-            }}
-          />
-          <TouchableOpacity onPress={sendMessage} style={{ marginLeft: 10, alignSelf: 'center' }}>
-            <Text style={{ color: '#2196F3', fontWeight: 'bold' }}>Send</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <Text style={{ padding: 10, color: 'gray', textAlign: 'center' }}>
-          This listing is marked as <Text style={{ fontWeight: 'bold' }}>BOOKED</Text>. You cannot send messages.
-        </Text>
-      )}
-    </KeyboardAvoidingView>
-  );
-}
+//       {/* Composer: enabled for non-owner; for owner only when a thread is selected */}
+//       {((!isOwner && !!chatId) || (isOwner && !!selectedChatId)) && (
+//         <View style={{ flexDirection: 'row', padding: 10, borderTopWidth: 1, borderColor: '#ddd' }}>
+//           <TextInput
+//             value={input}
+//             onChangeText={setInput}
+//             placeholder="Type a message"
+//             style={{ flex: 1, padding: 10, borderWidth: 1, borderColor: '#ccc', borderRadius: 8 }}
+//             onSubmitEditing={handleSend}
+//             returnKeyType="send"
+//           />
+//           <TouchableOpacity onPress={handleSend} style={{ marginLeft: 8, justifyContent: 'center' }}>
+//             <Text style={{ color: '#2196F3', fontWeight: 'bold' }}>Send</Text>
+//           </TouchableOpacity>
+//         </View>
+//       )}
+
+//       {/* Owner empty state */}
+//       {isOwner && threads.length === 0 && (
+//         <Text style={{ padding: 10, color: 'gray', textAlign: 'center' }}>
+//           No chats for this listing yet.
+//         </Text>
+//       )}
+//     </KeyboardAvoidingView>
+//   );
+// }
